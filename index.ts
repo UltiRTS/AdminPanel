@@ -14,30 +14,120 @@ const dbm = new DataManager('mysql', {
 dotenv.config();
 
 const app: Express = express();
+app.use(express.urlencoded({ extended: true }));
+
 const archiveRoutes = Router();
 const port: string = process.env.PORT || '3000';
 
-app.get('/', async (req: Request, res: Response) => {
+// user -> username
+const userPool: {[key: string]: string} = {};
+
+
+const auth = (req: Request, res: Response, next: Function) => {
+    const token = String(req.headers['x-access-token']);
+
+    if (!token) {
+        return res.status(401).send({ auth: false, message: 'No token provided.' });
+    }
+    if (!Object.values(userPool).includes(token)) {
+        return res.status(401).send({ auth: false, message: 'Failed to authenticate token.' });
+    }
+    next();
+}
+
+archiveRoutes.use(auth);
+
+archiveRoutes.get('/', async (req: Request, res: Response) => {
     const dbRes = await dbm.getArarchives();
     res.send(dbRes);
 });
 
-app.put('/', async (req: Request, res: Response) => {
-    const { zip_name, extract_to, zip_hash } = req.body;
-    const dbRes = await dbm.insertArchive({
-        zip_name,
-        extract_to,
-        zip_hash
-    })
+archiveRoutes.put('/', async (req: Request, res: Response) => {
+    try {
+        const { zip_name, extract_to, zip_hash } = req.body;
+        const dbRes = await dbm.insertArchive({
+            zip_name,
+            extract_to,
+            zip_hash
+        })
 
-    res.send(dbRes);
+        res.send(dbRes);
+    } catch(e) {
+        console.log(e);
+        res.send({
+            status: false,
+            msg: 'Insert failed'
+        });
+    }
 })
 
-app.delete('/', async (req: Request, res: Response) => {
-    const { id } = req.body;
-    const dbRes = await dbm.deleteArchive(id);
-    res.send(dbRes);
+archiveRoutes.delete('/', async (req: Request, res: Response) => {
+    try {
+        const { id } = req.body;
+        const dbRes = await dbm.deleteArchive(id);
+        res.send(dbRes);
+    } catch(e) {
+        console.log(e);
+        res.send({
+            status: false,
+            msg: 'Delete failed'
+        });
+    }
 })
+
+app.use('/archives', archiveRoutes);
+
+app.post('/auth/login', async (req: Request, res: Response) => {
+    try {
+        const { username, password } = req.body;
+        const dbRes = await dbm.getUser(username);
+        if(dbRes.status && dbRes.data) {
+            const user = dbRes.data[0];
+            if(dbm.verify(user, password) && user.accessLevel === 100) {
+                if(user.username in userPool) {
+                    res.send({
+                        status: false,
+                        msg: 'User already logged in',
+                        token: userPool[user.username]
+                    })
+                } else {
+                    const token = dbm.generateToken(user)
+                    userPool[user.username] = token;
+
+                    setTimeout(() => {
+                        delete userPool[user.username];
+                    }, 1000 * 60 * 60 * 24 * 7)
+                    res.send({
+                        status: true,
+                        msg: 'Login successfully',
+                        token: token
+                    })
+                }
+            } else {
+                res.send({
+                    status: false,
+                    msg: 'unprivileged user',
+                })
+            }
+        } else {
+            res.send({
+                status: false,
+                msg: 'Login failed'
+            })
+        }
+    } catch(e) {
+        console.log(e);
+        res.send({
+            status: false,
+            msg: 'Login failed'
+        });
+    }
+})
+
+app.get('/', (req: Request, res: Response) => {
+    res.send('Hello World!');
+})
+
 
 app.listen(port, () => {
   console.log(`[server]: Server is running at https://localhost:${port}`);

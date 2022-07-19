@@ -1,4 +1,5 @@
 import knex, {Knex} from "knex";
+import crypto from 'crypto'
 
 export class DataManager {
     knex: Knex;
@@ -95,5 +96,51 @@ export class DataManager {
                 msg: 'Delete failed'
             }
         }
+    }
+
+    async getUser(username: string) {
+        try {
+            const user = await this.knex.select('*').from('user').where({username: username});
+            return {
+                status: true,
+                msg: 'Get user successfully',
+                data: user
+            }
+        } catch(e) {
+            console.log(e);
+            return {
+                status: false,
+                msg: 'Get failed'
+            }
+        }
+    }
+
+    static saltNhash(password: string) {
+        const salt = crypto.randomBytes(16).toString('hex'); 
+    
+        // Hashing user's salt and password with 1000 iterations, 
+        
+        const hash = crypto.pbkdf2Sync(password, salt,  
+        1000, 64, `sha512`).toString(`hex`); 
+
+        return {
+            salt, hash
+        }
+    }
+
+    verify(user: {
+        salt: string
+        hash: string
+    }, password: string) {
+        var hash = crypto.pbkdf2Sync(password,  
+            user.salt, 1000, 64, `sha512`).toString(`hex`); 
+            return user.hash === hash; 
+    }
+
+    generateToken(user: {
+        username: string
+    }) {
+        const token = user.username + crypto.randomBytes(32).toString('hex');
+        return token
     }
 }
