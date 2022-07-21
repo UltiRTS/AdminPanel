@@ -130,19 +130,22 @@ app.post('/auth/login', async (req: Request, res: Response) => {
                 res.send({
                     status: false,
                     msg: 'unprivileged user',
+                    token: ''
                 })
             }
         } else {
             res.send({
                 status: false,
-                msg: 'Login failed'
+                msg: 'Login failed',
+                token: ''
             })
         }
     } catch(e) {
         console.log(e);
         res.send({
             status: false,
-            msg: 'Login failed'
+            msg: 'Login failed',
+            token: ''
         });
     }
 })
