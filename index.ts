@@ -2,7 +2,11 @@ import express, { Request, Response, Express, Router } from 'express';
 import * as dotenv from 'dotenv';
 import {DataManager} from './lib/db';
 import * as config from './config';
+import multer from 'multer';
+import crypto from 'crypto';
+import fs from 'fs';
 
+const upload = multer({ storage: multer.memoryStorage() });
 const dbm = new DataManager('mysql', {
     host : '127.0.0.1',
     port : 3306,
@@ -14,6 +18,7 @@ const dbm = new DataManager('mysql', {
 dotenv.config();
 
 const app: Express = express();
+app.use(express.json())
 app.use(express.urlencoded({ extended: true }));
 
 const archiveRoutes = Router();
@@ -37,14 +42,31 @@ const auth = (req: Request, res: Response, next: Function) => {
 
 archiveRoutes.use(auth);
 
+
 archiveRoutes.get('/', async (req: Request, res: Response) => {
     const dbRes = await dbm.getArarchives();
     res.send(dbRes);
 });
 
-archiveRoutes.put('/', async (req: Request, res: Response) => {
+// only this use `form-data`
+archiveRoutes.post('/', upload.single('zip_file'), async (req: Request, res: Response) => {
     try {
-        const { zip_name, extract_to, zip_hash } = req.body;
+        const { zip_name, extract_to } = req.body;
+        const zip_file = req.file;
+
+        if (!zip_file) {
+            return res.status(400).send({
+                status: false,
+                msg: 'No zip file provided'
+            });
+        }
+
+        const zip_hash = crypto.createHash('sha256').update(zip_file.buffer).digest('hex');
+
+        fs.writeFileSync(`${config.archiveDir}/${zip_name}`, zip_file.buffer);
+        
+        console.log(zip_hash);
+
         const dbRes = await dbm.insertArchive({
             zip_name,
             extract_to,
@@ -64,6 +86,7 @@ archiveRoutes.put('/', async (req: Request, res: Response) => {
 archiveRoutes.delete('/', async (req: Request, res: Response) => {
     try {
         const { id } = req.body;
+        console.log(id);
         const dbRes = await dbm.deleteArchive(id);
         res.send(dbRes);
     } catch(e) {
