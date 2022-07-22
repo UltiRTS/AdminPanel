@@ -78,6 +78,7 @@ archiveRoutes.post('/', upload.single('zip_file'), async (req: Request, res: Res
         const zip_hash = crypto.createHash('sha256').update(zip_file.buffer).digest('hex');
 
         fs.writeFileSync(`${config.archiveDir}/${zip_name}`, zip_file.buffer);
+        fs.chmodSync(`${config.archiveDir}/${zip_name}`, 0o777);
         
         console.log(zip_hash);
 
