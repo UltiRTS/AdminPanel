@@ -15,6 +15,33 @@ export class DataManager {
             connection: connection
         })
     }
+
+    async getArchiveName(id: number) {
+        try {
+            const archive = await this.knex.select('zip_name').from('archives').where({id: id});
+            return archive[0].zip_name;
+        } catch(e) {
+            console.log(e);
+            return null;
+        }
+    }
+
+    async getArchive(id: number) {
+        try {
+            const archive = await this.knex.select('*').from('archives').where({id: id});
+            return {
+                status: true,
+                msg: 'Get archive successfully',
+                archive: archive.length > 0 ? archive[0] : null
+            }
+        } catch(e) {
+            console.log(e);
+            return {
+                status: false,
+                msg: 'Get failed',
+            }
+        }
+    }
     
     async getArarchives() {
         try {
@@ -105,6 +132,42 @@ export class DataManager {
                 status: true,
                 msg: 'Get user successfully',
                 data: user
+            }
+        } catch(e) {
+            console.log(e);
+            return {
+                status: false,
+                msg: 'Get failed'
+            }
+        }
+    }
+
+    async addSystemConfig(name: string, engine: number, mod: number, essentials_hash: string) {
+        try {
+            await this.knex.transaction(async (trx) => {
+                await trx.insert({name, engine, mod, essentials_hash}).into('system_config');
+                await trx.commit();
+            })
+            return {
+                status: true,
+                msg: 'Added successfully'
+            }
+        } catch(e) {
+            console.log(e);
+            return {
+                status: false,
+                msg: 'Add failed'
+            }
+        }
+    }
+
+    async getSystemConfig() {
+        try {
+            const config = await this.knex.select('*').from('system_config');
+            return {
+                status: true,
+                msg: 'Get system config successfully',
+                data: config
             }
         } catch(e) {
             console.log(e);

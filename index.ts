@@ -5,6 +5,17 @@ import * as config from './config';
 import multer from 'multer';
 import crypto from 'crypto';
 import fs from 'fs';
+import jszip from 'jszip';
+import path from 'path';
+
+import { hashElement } from 'folder-hash';
+const options = { 
+    folders: { exclude: ['node_modules'], include: ['AI', 'games', 'include', 'lib', 'share', 'LuaUI']},
+    files: {include: ['*']}
+}
+
+
+
 
 const upload = multer({ storage: multer.memoryStorage() });
 const dbm = new DataManager('mysql', {
@@ -22,6 +33,7 @@ app.use(express.json())
 app.use(express.urlencoded({ extended: true }));
 
 const archiveRoutes = Router();
+const systemConfigRoutes = Router();
 const port: string = process.env.PORT || '3000';
 
 // user -> username
@@ -40,7 +52,9 @@ const auth = (req: Request, res: Response, next: Function) => {
     next();
 }
 
+
 archiveRoutes.use(auth);
+systemConfigRoutes.use(auth);
 
 
 archiveRoutes.get('/', async (req: Request, res: Response) => {
@@ -98,7 +112,111 @@ archiveRoutes.delete('/', async (req: Request, res: Response) => {
     }
 })
 
+systemConfigRoutes.get('/', async (req: Request, res: Response) => {
+    const dbRes = await dbm.getSystemConfig();
+    res.send(dbRes);
+})
+
+systemConfigRoutes.post('/', async (req: Request, res: Response) => {
+    try {
+        const { config_name, engine, mod } = req.body;
+        const engineQuery = await dbm.getArchive(engine);
+        const modQuery = await dbm.getArchive(mod);
+        if(!engineQuery.status || engineQuery.archive === null) {
+            res.send({
+                status: false,
+                msg: 'Get engine failed'
+            })
+            return;
+        }
+        if(!modQuery.status || modQuery.archive === null) {
+            res.send({
+                status: false,
+                msg: 'Get engine failed'
+            })
+            return;
+        }
+
+        const engineInfo = engineQuery.archive;
+        const modInfo = modQuery.archive;
+
+        const engineContent = fs.readFileSync(`${config.archiveDir}/${engineInfo.zip_name}`);
+        const modContent = fs.readFileSync(`${config.archiveDir}/${modInfo.zip_name}`);
+        if(!engineContent || !modContent) {
+            res.send({
+                status: false,
+                msg: 'archive file may be deleted'
+            })
+            return;
+        }
+
+        const engineZip = await jszip.loadAsync(engineContent);
+        const modZip = await jszip.loadAsync(modContent);
+
+        const engineDir = path.join(config.engineDir, engineInfo.extract_to);
+        const modDir = path.join(config.engineDir, modInfo.extract_to);
+
+        if(!fs.existsSync(engineDir)) {
+            fs.mkdirSync(engineDir);
+        }
+
+        for(const key of Object.keys(engineZip.files)) {
+            const item = engineZip.files[key];
+            if(item.dir) {
+                fs.mkdirSync(path.join(engineDir, item.name));
+            } else {
+                fs.writeFileSync(path.join(engineDir, item.name), Buffer.from(await item.async('arraybuffer')));
+            }
+        }
+
+        if(!fs.existsSync(modDir)) {
+            fs.mkdirSync(modDir);
+        }
+
+        for(const key of Object.keys(modZip.files)) {
+            const item = modZip.files[key];
+            if(item.dir) {
+                fs.mkdirSync(path.join(modDir, item.name));
+            } else {
+                fs.writeFileSync(path.join(modDir, item.name), Buffer.from(await item.async('arraybuffer')));
+            }
+        }
+
+        hashElement(engineDir, options).then(async (hash) => {
+            const dbRes = await dbm.addSystemConfig(config_name, engine, mod, hash.hash);
+            if(dbRes) {
+                res.send({
+                    status: true,
+                    msg: 'Add system config success',
+                });
+            } else {
+                res.send({
+                    status: false,
+                    msg: 'Add system config failed',
+                });
+            }
+        }).catch(err => {
+            console.log(err);
+            res.send({
+                status: false,
+                msg: 'hash element failed'
+            });
+        })
+
+    } catch(e) {
+        console.log(e);
+        res.send({
+            status: false,
+            msg: 'Insert failed'
+        });
+    }
+})
+
 app.use('/archives', archiveRoutes);
+app.use('/systemconf', systemConfigRoutes);
+
+
+
 
 app.post('/auth/login', async (req: Request, res: Response) => {
     try {
