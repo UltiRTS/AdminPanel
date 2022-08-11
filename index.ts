@@ -7,12 +7,27 @@ import crypto from 'crypto';
 import fs from 'fs';
 import jszip from 'jszip';
 import path from 'path';
+import axios, { Axios, AxiosPromise } from 'axios';
+import MultipartDownload from 'multipart-download';
 
 import { hashElement } from 'folder-hash';
-const options = { 
-    folders: { exclude: ['node_modules'], include: ['AI', 'games', 'include', 'lib', 'share', 'LuaUI']},
+import { off } from 'process';
+const options4engine = {
+    folders: { exclude: ['node_modules'], include: ['AI', 'include', 'lib', 'share', 'LuaUI']},
     files: {include: ['*']}
 }
+const options4mod = {
+    folders: { exclude: ['node_modules'], include: ['features', 'gamedata', 'LuaRules', 'LuaGaia', 'LuaUI', 'lups', 'units', 'weapons', 'scripts', 'modularCommAPI']},
+    files: {include: ['*']}
+}
+
+const downloads: {
+    [key: string]: {
+        handler: Promise<void> | null,
+        downloaded_size: number,
+        status: string
+    }
+} = {}
 
 
 
@@ -75,7 +90,7 @@ archiveRoutes.post('/', upload.single('zip_file'), async (req: Request, res: Res
             });
         }
 
-        const zip_hash = crypto.createHash('sha256').update(zip_file.buffer).digest('hex');
+        const zip_hash = crypto.createHash('md5').update(zip_file.buffer).digest('hex');
 
         fs.writeFileSync(`${config.archiveDir}/${zip_name}`, zip_file.buffer);
         fs.chmodSync(`${config.archiveDir}/${zip_name}`, 0o777);
@@ -96,6 +111,80 @@ archiveRoutes.post('/', upload.single('zip_file'), async (req: Request, res: Res
             msg: 'Insert failed'
         });
     }
+})
+
+archiveRoutes.get('/file-io/:key', async (req: Request, res: Response) => {
+    const { key } = req.params;
+    if(key in downloads) {
+        res.send({
+            status: true,
+            download: {
+                size: downloads[key].downloaded_size,
+                status: downloads[key].status
+            }
+        })
+    } else {
+        res.send({
+            status: false, 
+            downloads: {
+                size: 0,
+                status: 'not exists'
+            }
+        })
+    }
+})
+
+archiveRoutes.post('/file-io', async (req: Request, res: Response) => {
+    const key = req.body.key;
+    const filename = req.body.filename;
+    const extract_to = req.body.extract_to;
+
+    if(!key || !filename || !extract_to) {
+        return res.status(400).send({
+            status: false,
+            msg: 'No key, filename, extract_to provided'
+        });
+    }
+
+    downloads[key] = {
+        handler: null,
+        downloaded_size: 0,
+        status: 'downloading'
+    }
+
+    const md5 = crypto.createHash('md5');
+
+    downloads[key].handler = axios({
+        url: `http://file.io/${key}`,
+        method: 'GET',
+        responseType: 'stream',
+    }).then(async (resp) => {
+        resp.data
+            .on('data', (chunk: Buffer) => {
+                downloads[key].downloaded_size += chunk.length;
+                md5.update(chunk)
+            })
+            .on('end', async () => {
+                downloads[key].status = 'done';
+                const zip_hash = md5.digest('hex');
+                const insertRes = await dbm.insertArchive({
+                    zip_name: filename,
+                    extract_to,
+                    zip_hash
+                })
+
+                downloads[key].status = insertRes.status? 'inserted': 'failed to insert';
+            })
+            .pipe(fs.createWriteStream(`${config.archiveDir}/${filename}`));
+    }).catch(e => {
+        console.log(e);
+        downloads[key].status = 'failed';
+    })
+
+    res.send({
+        status: true,
+        msg: 'download started'
+    })
 })
 
 archiveRoutes.delete('/', async (req: Request, res: Response) => {
@@ -120,7 +209,7 @@ systemConfigRoutes.get('/', async (req: Request, res: Response) => {
 
 systemConfigRoutes.post('/', async (req: Request, res: Response) => {
     try {
-        const { config_name, engine, mod } = req.body;
+        const { config_name, engine, mod, type } = req.body;
         const engineQuery = await dbm.getArchive(engine);
         const modQuery = await dbm.getArchive(mod);
         if(!engineQuery.status || engineQuery.archive === null) {
@@ -154,8 +243,8 @@ systemConfigRoutes.post('/', async (req: Request, res: Response) => {
         const engineZip = await jszip.loadAsync(engineContent);
         const modZip = await jszip.loadAsync(modContent);
 
-        const engineDir = path.join(config.engineDir, engineInfo.extract_to);
-        const modDir = path.join(config.engineDir, modInfo.extract_to);
+        const engineDir = path.join(config.contextDir, engineInfo.extract_to);
+        const modDir = path.join(config.contextDir, modInfo.extract_to);
 
         if(!fs.existsSync(engineDir)) {
             fs.mkdirSync(engineDir);
@@ -183,9 +272,11 @@ systemConfigRoutes.post('/', async (req: Request, res: Response) => {
             }
         }
 
-        hashElement(engineDir, options).then(async (hash) => {
-            const dbRes = await dbm.addSystemConfig(config_name, engine, mod, hash.hash);
-            if(dbRes) {
+        try {
+            const engine_essentials_hash = (await hashElement(engineDir, options4engine)).hash;
+            const mod_essentials_hash = (await hashElement(modDir, options4mod)).hash;
+            const dbRes = await dbm.addSystemConfig(config_name, engine, mod, engine_essentials_hash, mod_essentials_hash, type);
+            if(dbRes.status) {
                 res.send({
                     status: true,
                     msg: 'Add system config success',
@@ -196,13 +287,13 @@ systemConfigRoutes.post('/', async (req: Request, res: Response) => {
                     msg: 'Add system config failed',
                 });
             }
-        }).catch(err => {
-            console.log(err);
+        } catch(e) {
+            console.log(e);
             res.send({
                 status: false,
-                msg: 'hash element failed'
+                msg: 'insertion failed'
             });
-        })
+        }
 
     } catch(e) {
         console.log(e);

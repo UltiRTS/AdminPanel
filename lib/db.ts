@@ -142,10 +142,10 @@ export class DataManager {
         }
     }
 
-    async addSystemConfig(name: string, engine: number, mod: number, essentials_hash: string) {
+    async addSystemConfig(name: string, engine: number, mod: number, engine_essentials_hash: string, mod_essentials_hash: string, _type: string) {
         try {
             await this.knex.transaction(async (trx) => {
-                await trx.insert({name, engine, mod, essentials_hash}).into('system_config');
+                await trx.insert({name, engine, mod, engine_essentials_hash, mod_essentials_hash, _type}).into('system_config');
                 await trx.commit();
             })
             return {
